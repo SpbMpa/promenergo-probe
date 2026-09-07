@@ -1,0 +1,63 @@
+name: Probe промэнергоавтоматика.рф
+
+# Transport probe only — one GET request from a GitHub-hosted runner to
+# check whether this specific network class can reach the public
+# /sklad/ page without hitting the 403/redirect block that Vercel,
+# Google Apps Script (GCP), and Cloudflare Workers all get. No bypass
+# attempted, no CAPTCHA/stealth, hardcoded upstream URL only. Manual
+# trigger only — never runs on a schedule or push.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /sklad/ and report diagnostics only (never the full HTML)
+        run: |
+          set -e
+          URL="https://xn--80aaagdlzqlegkecgqe4bd2s.xn--p1ai/sklad/"
+
+          curl -s -D /tmp/headers.txt -o /tmp/body.html \
+            -A "Mozilla/5.0 (compatible; LeadQualificationBot/1.0)" \
+            -L --max-redirs 10 \
+            -w "HTTP_CODE:%{http_code}\nNUM_REDIRECTS:%{num_redirects}\nFINAL_URL:%{url_effective}\nCONTENT_TYPE:%{content_type}\nTIME_TOTAL_MS:%{time_total}\n" \
+            "$URL" > /tmp/curl_meta.txt
+
+          HTTP_CODE=$(grep '^HTTP_CODE:' /tmp/curl_meta.txt | cut -d: -f2)
+          NUM_REDIRECTS=$(grep '^NUM_REDIRECTS:' /tmp/curl_meta.txt | cut -d: -f2)
+          FINAL_URL=$(grep '^FINAL_URL:' /tmp/curl_meta.txt | cut -d: -f2-)
+          CONTENT_TYPE=$(grep '^CONTENT_TYPE:' /tmp/curl_meta.txt | cut -d: -f2-)
+          TIME_TOTAL=$(grep '^TIME_TOTAL_MS:' /tmp/curl_meta.txt | cut -d: -f2)
+
+          BODY_LEN=$(wc -c < /tmp/body.html | tr -d ' ')
+
+          HAS_STOCKSTART=false
+          grep -q "stockstart" /tmp/body.html && HAS_STOCKSTART=true || true
+
+          HAS_KNOWN_ARTICLE=false
+          grep -q "PPS-1G0612" /tmp/body.html && HAS_KNOWN_ARTICLE=true || true
+
+          HAS_BLOCK_MARKER=false
+          grep -qiE "block\.php|перенаправлены" /tmp/body.html && HAS_BLOCK_MARKER=true || true
+
+          echo "=== Diagnostic (raw HTML never printed) ==="
+          echo "http_status: $HTTP_CODE"
+          echo "num_redirects: $NUM_REDIRECTS"
+          echo "final_url: $FINAL_URL"
+          echo "content_type: $CONTENT_TYPE"
+          echo "body_length: $BODY_LEN"
+          echo "has_stockstart: $HAS_STOCKSTART"
+          echo "has_known_article_PPS-1G0612: $HAS_KNOWN_ARTICLE"
+          echo "has_block_or_interstitial_marker: $HAS_BLOCK_MARKER"
+          echo "response_time_s: $TIME_TOTAL"
+
+          if [ "$HTTP_CODE" = "200" ] && [ "$BODY_LEN" -gt 500000 ] && [ "$HAS_STOCKSTART" = "true" ] && [ "$HAS_KNOWN_ARTICLE" = "true" ]; then
+            echo "RESULT: PASS"
+          else
+            echo "RESULT: BLOCKED_OR_INCOMPLETE"
+            echo "--- first 300 bytes of body (diagnostic only) ---"
+            head -c 300 /tmp/body.html
+            echo ""
+          fi
