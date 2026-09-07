@@ -44,6 +44,9 @@ Deno.serve(async (req: Request) => {
       hasStockStart: body.includes("stockstart"),
       hasKnownArticle: body.includes(KNOWN_ARTICLE),
       contentType: res.headers.get("content-type"),
+      location: res.headers.get("location"),
+      setCookie: res.headers.get("set-cookie") ? "present" : null,
+      bodySnippet: body.length > 0 && body.length < 2000 ? body.slice(0, 500) : undefined,
       durationMs,
     });
   } catch (err) {
